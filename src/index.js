@@ -35,7 +35,6 @@ app.use(express.static(__dirname + '/public'))
     .use(cookieParser())
 
 app.get('/login', function (req, res) {
-
     var state = generateRandomString(16)
     res.cookie(stateKey, state)
 
@@ -51,44 +50,47 @@ app.get('/login', function (req, res) {
         }))
 })
 
-const test = async (access_token) => {
-    let tracks = []
+const fetchLikedSongs = async (accessToken) => {
+    let likedSongs = []
 
-    let options = {
-        url: 'https://api.spotify.com/v1/me/tracks?offset=0&limit=50',
-        headers: { 'Authorization': 'Bearer ' + access_token },
-        json: true
-    }
-
-    let res = await axios.get('https://api.spotify.com/v1/me/tracks?offset=0&limit=50',{ headers: { Authorization: 'Bearer ' + access_token } })
-    console.log(res.status)
-    console.log(res.data.items.length)
-    console.log()
-
-    for (i in res.data.items) { tracks.push(res.data.items[i]) }
+    let res = await axios.get('https://api.spotify.com/v1/me/tracks?offset=0&limit=50', {headers: {Authorization: 'Bearer ' + accessToken}})
+    for (i in res.data.items) {likedSongs.push(res.data.items[i])}
+    console.log(`Liked Songs: ${likedSongs.length}`)
 
     while (res.data.items.length == 50) {
-        res = await axios.get(`https://api.spotify.com/v1/me/tracks?offset=${tracks.length}&limit=50`,{headers: {Authorization: 'Bearer ' + access_token}})
-        console.log(res.status)
-        console.log(res.data.items.length)
-        console.log()
-
-        if (res.data.items.length == 0) {
-
-        }
-
-        for (i in res.data.items) { tracks.push(res.data.items[i]) }
+        res = await axios.get(`https://api.spotify.com/v1/me/tracks?offset=${likedSongs.length}&limit=50`, {headers: {Authorization: 'Bearer ' + accessToken}})
+        for (i in res.data.items) {likedSongs.push(res.data.items[i])}
+        console.log(`Liked Songs: ${likedSongs.length}`)
     }
 
+    return likedSongs
+}
 
-    console.log(tracks.length)
+const createPlaylist = async (accessToken, userId, likedSongs) => {
+    let playlists = []
+
+    let res = await axios.get(`https://api.spotify.com/v1/users/${userId}/playlists`, {headers: {Authorization: 'Bearer ' + accessToken}})
+    for (i in res.data.items) {playlists.push(res.data.items[i])}
+    console.log(`Playlists: ${playlists.length}`)
+
+    while (res.data.items.length == 50) {
+        res = await axios.get(`https://api.spotify.com/v1/users/${userId}/playlists`, {headers: {Authorization: 'Bearer ' + accessToken}})
+        for (i in res.data.items) {playlists.push(res.data.items[i])}
+        console.log(`Playlists: ${playlists.length}`)
+    }
+
+    for (i in playlists) {
+        if (playlists[i].name == "Liked Songs" && playlists[i].owner.id == userId) {
+            console.log('Error: Liked Songs Playlist Already Exists')
+            return
+        }
+    }
+
+    res = await axios.post(`https://api.spotify.com/v1/users/${userId}/playlists`, {name: "Liked Songs"}, {headers: {Authorization: 'Bearer ' + accessToken}})
+    console.log('Status: Playlist Created')
 }
 
 app.get('/callback', function (req, res) {
-
-    // your application requests refresh and access tokens
-    // after checking the state parameter
-
     var code = req.query.code || null
     var state = req.query.state || null
     var storedState = req.cookies ? req.cookies[stateKey] : null
@@ -116,27 +118,31 @@ app.get('/callback', function (req, res) {
         request.post(authOptions, function (error, response, body) {
             if (!error && response.statusCode === 200) {
 
-                var access_token = body.access_token,
-                    refresh_token = body.refresh_token
+                var accessToken = body.access_token,
+                    refreshToken = body.refresh_token
 
-                test(access_token)
+                let likedSongs = fetchLikedSongs(accessToken) // must await
 
                 var options = {
                     url: 'https://api.spotify.com/v1/me',
-                    headers: { 'Authorization': 'Bearer ' + access_token },
+                    headers: { 'Authorization': 'Bearer ' + accessToken },
                     json: true
                 }
 
                 // use the access token to access the Spotify Web API
                 request.get(options, function (error, response, body) {
                     console.log(body)
+                    let userId = body.id
+                    createPlaylist(accessToken, userId, likedSongs)
                 })
+
+                
 
                 // we can also pass the token to the browser to make requests from there
                 res.redirect('/#' +
                     querystring.stringify({
-                        access_token: access_token,
-                        refresh_token: refresh_token
+                        access_token: accessToken,
+                        refresh_token: refreshToken
                     }))
             } else {
                 res.redirect('/#' +
@@ -148,7 +154,7 @@ app.get('/callback', function (req, res) {
     }
 })
 
-app.get('/refresh_token', function (req, res) {
+app.get('/refreshToken', function (req, res) {
     // requesting access token from refresh token
     var refresh_token = req.query.refresh_token
     var authOptions = {
@@ -163,26 +169,11 @@ app.get('/refresh_token', function (req, res) {
 
     request.post(authOptions, function (error, response, body) {
         if (!error && response.statusCode === 200) {
-            var access_token = body.access_token
+            var accessToken = body.accessToken
             res.send({
-                'access_token': access_token
+                'access_token': accessToken
             })
         }
-    })
-})
-
-app.get('/savedTracks', function (req, res) {
-    access_token = "Ks3Gbdy4dgaVRYOEi9hpWeROSPgwRPEg1PkK4ZUZnhlQ4jSDS1eFW6wQaJiP1xBq89flOg8CpqM8xmqqnxRLraB6a8_8gRNptq88ZevohoMMASlPZ_Dad5ZxO7n0SjOKgoVpLPuJpPRn7pPDhc7DuwMF2L9yznm2wFhKSsHXo3whuoPk0DazbYBjWiT0SzbUnSnfmLcfut3_OVshOYFOHKLrSj0"
-
-    var options = {
-        url: 'https://api.spotify.com/v1/me',
-        headers: { 'Authorization': 'Bearer ' + access_token },
-        json: true
-    }
-
-    // use the access token to access the Spotify Web API
-    request.get(options, function (error, response, body) {
-        console.log(body)
     })
 })
 
