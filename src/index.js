@@ -50,44 +50,73 @@ app.get('/login', function (req, res) {
         }))
 })
 
-const fetchLikedSongs = async (accessToken) => {
-    let likedSongs = []
-
-    let res = await axios.get('https://api.spotify.com/v1/me/tracks?offset=0&limit=50', {headers: {Authorization: 'Bearer ' + accessToken}})
-    for (i in res.data.items) {likedSongs.push(res.data.items[i])}
-    console.log(`Liked Songs: ${likedSongs.length}`)
-
-    while (res.data.items.length == 50) {
-        res = await axios.get(`https://api.spotify.com/v1/me/tracks?offset=${likedSongs.length}&limit=50`, {headers: {Authorization: 'Bearer ' + accessToken}})
-        for (i in res.data.items) {likedSongs.push(res.data.items[i])}
-        console.log(`Liked Songs: ${likedSongs.length}`)
-    }
-
-    return likedSongs
-}
-
-const createPlaylist = async (accessToken, userId, likedSongs) => {
+const createPlaylist = async (accessToken, userId) => {
     let playlists = []
 
-    let res = await axios.get(`https://api.spotify.com/v1/users/${userId}/playlists`, {headers: {Authorization: 'Bearer ' + accessToken}})
+    let res = await axios.get(`https://api.spotify.com/v1/users/${userId}/playlists`, {headers: {Authorization: `Bearer ${accessToken}`}})
     for (i in res.data.items) {playlists.push(res.data.items[i])}
-    console.log(`Playlists: ${playlists.length}`)
 
     while (res.data.items.length == 50) {
-        res = await axios.get(`https://api.spotify.com/v1/users/${userId}/playlists`, {headers: {Authorization: 'Bearer ' + accessToken}})
+        res = await axios.get(`https://api.spotify.com/v1/users/${userId}/playlists`, {headers: {Authorization: `Bearer ${accessToken}`}})
         for (i in res.data.items) {playlists.push(res.data.items[i])}
-        console.log(`Playlists: ${playlists.length}`)
     }
 
     for (i in playlists) {
         if (playlists[i].name == "Liked Songs" && playlists[i].owner.id == userId) {
-            console.log('Error: Liked Songs Playlist Already Exists')
-            return
+            console.log(`Playlist ID: ${playlists[i].id}`)
+            return null
         }
     }
 
-    res = await axios.post(`https://api.spotify.com/v1/users/${userId}/playlists`, {name: "Liked Songs"}, {headers: {Authorization: 'Bearer ' + accessToken}})
-    console.log('Status: Playlist Created')
+    res = await axios.post(`https://api.spotify.com/v1/users/${userId}/playlists`, {name: "Liked Songs"}, {headers: {Authorization: `Bearer ${accessToken}`}})
+
+    console.log(`Playlist ID: ${res.data.id}`)
+    return res.data.id
+}
+
+const fetchLikedSongs = async (accessToken) => {
+    let tracks = []
+    let likedSongs = []
+
+    let res = await axios.get('https://api.spotify.com/v1/me/tracks?offset=0&limit=50', {headers: {Authorization: `Bearer ${accessToken}`}})
+    for (let i in res.data.items) {tracks.push(res.data.items[i].track.uri)}
+
+    while (res.data.items.length == 50) {
+        res = await axios.get(`https://api.spotify.com/v1/me/tracks?offset=${tracks.length}&limit=50`, {headers: {Authorization: `Bearer ${accessToken}`}})
+        for (let i in res.data.items) {tracks.push(res.data.items[i].track.uri)}
+    }
+
+    while (tracks.length - (likedSongs.length * 100) >= 100) {
+        let trackList = []
+        for (let i = 0; i < 100; i++) {trackList.push(tracks[(likedSongs.length * 100) + i])}
+        likedSongs.push(trackList)
+    }
+
+    let trackList = []
+    for (let i = 0; i < tracks.length - (likedSongs.length * 100); i++) {trackList.push(tracks[(likedSongs.length * 100) + i])}
+    likedSongs.push(trackList)
+
+    console.log(`Liked Songs: ${tracks.length}`)
+    return likedSongs
+}
+
+const fillPlaylist = async (accessToken, likedSongs, playlistId) => {
+    for (let i in likedSongs) {
+        await axios.post(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {uris: likedSongs[i]}, {headers: {Authorization: `Bearer ${accessToken}`}})
+    }
+}
+
+const main = async (accessToken, userId) => {
+    const [playlistId, likedSongs] = await Promise.all([
+		createPlaylist(accessToken, userId),
+		fetchLikedSongs(accessToken)
+	])
+
+    if (playlistId == null) {console.log('Playlist Already Exists'); return}
+    if (likedSongs.length == 0) {console.log('No Liked Songs'); return}
+
+    await fillPlaylist(accessToken, likedSongs, playlistId)
+    console.log('Playlist Filled')
 }
 
 app.get('/callback', function (req, res) {
@@ -121,19 +150,18 @@ app.get('/callback', function (req, res) {
                 var accessToken = body.access_token,
                     refreshToken = body.refresh_token
 
-                let likedSongs = fetchLikedSongs(accessToken) // must await
-
                 var options = {
                     url: 'https://api.spotify.com/v1/me',
                     headers: { 'Authorization': 'Bearer ' + accessToken },
                     json: true
                 }
 
+                
                 // use the access token to access the Spotify Web API
                 request.get(options, function (error, response, body) {
                     console.log(body)
-                    let userId = body.id
-                    createPlaylist(accessToken, userId, likedSongs)
+                    main(accessToken, body.id)
+                    //createPlaylist(accessToken, userId, likedSongs)
                 })
 
                 
